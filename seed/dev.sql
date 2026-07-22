@@ -1,0 +1,7 @@
+INSERT OR IGNORE INTO parrots (id,owner_open_id,species,ring_number,ring_number_normalized,gender,status,birth_date,price_cents,public_intro,private_notes,media_json,active_pair_id,paired_at,revision,created_at,updated_at,deleted_at,deleted_by) VALUES
+('dev-001-m','OWNER_OPENID_REPLACE_ME','蓝色金刚鹦鹉','R-001-M','R-001-M','MALE','FOR_SALE','2024-09-15',1200000,'蓝色金刚鹦鹉演示档案','仅用于开发环境验收','[]',NULL,NULL,1,'2026-07-18T00:00:00.000Z','2026-07-18T00:00:00.000Z',NULL,NULL),
+('dev-001-f','OWNER_OPENID_REPLACE_ME','蓝色金刚鹦鹉','R-001-F','R-001-F','FEMALE','FOR_SALE','2024-07-10',1250000,'蓝色金刚鹦鹉演示档案','仅用于开发环境验收','[]',NULL,NULL,1,'2026-07-18T00:00:00.000Z','2026-07-18T00:00:00.000Z',NULL,NULL),
+('dev-002-f','OWNER_OPENID_REPLACE_ME','粉红葵花鹦鹉','R-002-F','R-002-F','FEMALE','BREEDER','2024-03-10',850000,'粉红葵花鹦鹉演示档案','仅用于开发环境验收','[]',NULL,NULL,1,'2026-07-18T00:00:00.000Z','2026-07-18T00:00:00.000Z',NULL,NULL),
+('dev-002-m','OWNER_OPENID_REPLACE_ME','粉红葵花鹦鹉','R-002-M','R-002-M','MALE','BREEDER','2024-04-15',900000,'粉红葵花鹦鹉演示档案','仅用于开发环境验收','[]',NULL,NULL,1,'2026-07-18T00:00:00.000Z','2026-07-18T00:00:00.000Z',NULL,NULL),
+('dev-005-f','OWNER_OPENID_REPLACE_ME','牡丹鹦鹉','R-005-F','R-005-F','FEMALE','FOR_SALE','2025-06-20',35000,'牡丹鹦鹉演示档案','仅用于开发环境验收','[]',NULL,NULL,1,'2026-07-18T00:00:00.000Z','2026-07-18T00:00:00.000Z',NULL,NULL),
+('dev-005-m','OWNER_OPENID_REPLACE_ME','牡丹鹦鹉','R-005-M','R-005-M','MALE','BREEDER','2025-05-10',38000,'牡丹鹦鹉演示档案','仅用于开发环境验收','[]',NULL,NULL,1,'2026-07-18T00:00:00.000Z','2026-07-18T00:00:00.000Z',NULL,NULL);

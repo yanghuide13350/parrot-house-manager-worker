@@ -1,0 +1,31 @@
+name = "parrot-pro-api"
+main = "src/index.js"
+compatibility_date = "2026-07-18"
+account_id = "fcbfa97ff48076d55614b78eb9201d52"
+
+[vars]
+WX_APP_ID = "wx013459f02ef0288c"
+API_ALLOWED_ORIGIN = ""
+# 额外授权的微信账号（逗号分隔的 openid），与主账号共享同一份数据
+ADMIN_OPENIDS = "oTo3K5dMsyGGMIifZQ87Uu2tYlDU,oTo3K5Z-MQQI5HnXWfvtg1UhyhgY,oTo3K5TX9yrAe0MI6n9HeNCx4HSI,oTo3K5YzCHYNg6FSwu-TdOxI8HuA,oTo3K5YXjsa_MZm9kTEwBcV5TGRY"
+
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "parrot-pro-media"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "parrot-pro-dev"
+database_id = "18b8c0c8-2aa2-49c1-a03d-ab75faffa8d0"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "COMMAND_COORDINATOR"
+class_name = "CommandCoordinator"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CommandCoordinator"]
+
+[triggers]
+crons = ["0 3 * * *"]

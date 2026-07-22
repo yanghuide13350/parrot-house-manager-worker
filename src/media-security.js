@@ -1,0 +1,7 @@
+export function isUnsafeHostname(hostname) {
+  const value=String(hostname||'').toLowerCase().replace(/^\[|\]$/g,'')
+  if(value==='localhost'||value.endsWith('.localhost')||value.endsWith('.local'))return true
+  if(/^\d+\.\d+\.\d+\.\d+$/.test(value)){const [a,b]=value.split('.').map(Number);return a===0||a===10||a===127||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||(a===192&&b===168)||a>=224}
+  return value==='::1'||value==='::'||value.startsWith('fc')||value.startsWith('fd')||value.startsWith('fe8')||value.startsWith('fe9')||value.startsWith('fea')||value.startsWith('feb')||value.includes(':')
+}
+export function sniff(buffer,imageLimit,videoLimit){const bytes=new Uint8Array(buffer);const ascii=(start,end)=>String.fromCharCode(...bytes.slice(start,end));if(bytes.length>=3&&bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff)return{type:'image',mime:'image/jpeg',extension:'jpg',limit:imageLimit};if(bytes.length>=8&&[0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a].every((v,i)=>bytes[i]===v))return{type:'image',mime:'image/png',extension:'png',limit:imageLimit};if(bytes.length>=12&&ascii(0,4)==='RIFF'&&ascii(8,12)==='WEBP')return{type:'image',mime:'image/webp',extension:'webp',limit:imageLimit};if(bytes.length>=6&&['GIF87a','GIF89a'].includes(ascii(0,6)))return{type:'image',mime:'image/gif',extension:'gif',limit:imageLimit};if(bytes.length>=12&&ascii(4,8)==='ftyp')return{type:'video',mime:'video/mp4',extension:'mp4',limit:videoLimit};return null}
