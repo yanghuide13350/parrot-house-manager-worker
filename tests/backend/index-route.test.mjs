@@ -45,6 +45,32 @@ test('ADMIN_OPENIDS members share the primary owner workspace', async () => {
   } finally { env.DB.close() }
 })
 
+test('only the owner or an administrator may remove completed hatching records', async () => {
+  const { signSession } = await import('../../src/core.js')
+  const { createD1 } = await import('./helpers/d1-adapter.mjs')
+  const fs = await import('node:fs')
+  const migration = [
+    fs.readFileSync(new URL('../../migrations/0001_initial.sql', import.meta.url), 'utf8'),
+    fs.readFileSync(new URL('../../migrations/0002_access_control.sql', import.meta.url), 'utf8'),
+    fs.readFileSync(new URL('../../migrations/0003_access_settings.sql', import.meta.url), 'utf8')
+  ].join('\n')
+  const secret = 'session-secret-that-is-longer-than-thirty-two'
+  const env = { DB: createD1(migration), SESSION_SECRET: secret, OWNER_OPENID: 'owner-open-id', ADMIN_OPENIDS: '' }
+  try {
+    await env.DB.prepare("INSERT INTO access_grants (id,open_id,role,note,status,created_by,created_at,updated_at,disabled_at) VALUES ('member-grant','member-open-id','MEMBER','','ACTIVE','owner-open-id','2025-01-01T00:00:00.000Z','2025-01-01T00:00:00.000Z',NULL)").run()
+    const token = await signSession('member-open-id', secret)
+    const response = await worker.fetch(new Request('https://api.example.com/api/manage', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'hatching.delete', input: { id: 'record-id', revision: 1 }, requestId: 'remove-completed-1' })
+    }), env)
+    assert.equal(response.status, 403)
+    const body = await response.json()
+    assert.equal(body.error.code, 'FORBIDDEN')
+    assert.equal(body.error.message, '仅主账号或管理员可移除已完成档案')
+  } finally { env.DB.close() }
+})
+
 test('access list includes ADMIN_OPENIDS configuration grants', async () => {
   const { signSession } = await import('../../src/core.js')
   const { createD1 } = await import('./helpers/d1-adapter.mjs')

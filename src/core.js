@@ -1,5 +1,5 @@
 export const STATUS = Object.freeze({ FOR_SALE: 'FOR_SALE', SOLD: 'SOLD', RETURNED: 'RETURNED', BREEDER: 'BREEDER', PAIRED: 'PAIRED', INCUBATING: 'INCUBATING' })
-export const WRITE_ACTIONS = new Set(['parrots.create','parrots.update','parrots.delete','parrots.setBreeder','parrots.unsetBreeder','breeding.pair','breeding.cancel','hatching.create','hatching.updateProgress','hatching.complete','hatching.delete','sales.create','sales.return','sales.updateFollowUp','shares.create','shares.revoke'])
+export const WRITE_ACTIONS = new Set(['parrots.create','parrots.createFromClutch','parrots.update','parrots.delete','parrots.setBreeder','parrots.unsetBreeder','breeding.pair','breeding.cancel','hatching.create','hatching.updateProgress','hatching.complete','hatching.delete','sales.create','sales.return','sales.updateFollowUp','shares.create','shares.revoke'])
 
 export class ApiError extends Error {
   constructor(code, message, status = 400, details) { super(message); this.code = code; this.status = status; this.details = details }
