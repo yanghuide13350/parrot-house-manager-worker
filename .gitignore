@@ -1,2 +1,5 @@
 # Wrangler local development state and generated bundles
 .wrangler/
+.dev.vars*
+.env*
+node_modules/

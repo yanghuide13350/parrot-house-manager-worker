@@ -3,8 +3,8 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 const root=process.cwd()
-const files=['worker/src/core.js','worker/src/db.js','worker/src/service.js','worker/src/media-security.js','worker/src/r2.js','worker/src/access.js','worker/src/index.js']
-const required=[...files,'worker/package.json','worker/wrangler.toml','worker/migrations/0001_initial.sql','worker/migrations/0002_access_control.sql','worker/migrations/0003_access_settings.sql','worker/migrations/0012_introductions.sql','worker/migrations/0013_supply_records.sql','worker/.dev.vars.example']
+const files=['worker/src/core.js','worker/src/db.js','worker/src/service.js','worker/src/media-security.js','worker/src/r2.js','worker/src/access.js','worker/src/sale-copy.js','worker/src/sale-copy-jobs.js','worker/src/index.js']
+const required=[...files,'worker/package.json','worker/wrangler.toml','worker/migrations/0001_initial.sql','worker/migrations/0002_access_control.sql','worker/migrations/0003_access_settings.sql','worker/migrations/0012_introductions.sql','worker/migrations/0013_supply_records.sql','worker/migrations/0014_sale_copy_documents.sql','worker/migrations/0015_sale_copy_streaming.sql','worker/.dev.vars.example']
 for(const file of required)if(!fs.existsSync(path.join(root,file)))throw new Error(`Missing Worker file: ${file}`)
 JSON.parse(fs.readFileSync(path.join(root,'worker/package.json'),'utf8'))
 for(const file of files){const result=spawnSync(process.execPath,['--check',path.join(root,file)],{encoding:'utf8'});if(result.status!==0){process.stderr.write(result.stderr);process.exit(result.status||1)}}

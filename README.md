@@ -43,9 +43,12 @@ npx wrangler secret put WX_APP_SECRET
 npx wrangler secret put SESSION_SECRET
 npx wrangler secret put SHARE_TOKEN_SECRET
 npx wrangler secret put MEDIA_SIGNING_SECRET
+npx wrangler secret put SENSENOVA_API_KEY
 ```
 
 `SESSION_SECRET`、`SHARE_TOKEN_SECRET` 和 `MEDIA_SIGNING_SECRET` 分别使用独立随机值，可通过 `openssl rand -base64 48` 生成。不要复用微信 AppSecret。
+
+`SENSENOVA_API_KEY` 仅供 Worker 生成待售鹦鹉的 AI 文案使用。它必须通过 Wrangler Secret 或 Cloudflare Dashboard 的 Secret 保存，不能写进 `wrangler.toml`、小程序配置或 Git；本地开发则复制 `.dev.vars.example` 为 `.dev.vars` 后填写。
 
 首次部署时不要配置 `OWNER_OPENID`，然后执行：
 

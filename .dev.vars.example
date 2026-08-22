@@ -3,3 +3,4 @@ OWNER_OPENID=replace-with-owner-openid-for-local-testing
 SESSION_SECRET=replace-with-at-least-32-random-characters
 SHARE_TOKEN_SECRET=replace-with-at-least-32-random-characters
 MEDIA_SIGNING_SECRET=replace-with-at-least-32-random-characters
+SENSENOVA_API_KEY=replace-with-sensenova-api-key

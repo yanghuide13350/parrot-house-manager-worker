@@ -23,9 +23,17 @@ migrations_dir = "migrations"
 name = "COMMAND_COORDINATOR"
 class_name = "CommandCoordinator"
 
+[[durable_objects.bindings]]
+name = "SALE_COPY_COORDINATOR"
+class_name = "SaleCopyCoordinator"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["CommandCoordinator"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["SaleCopyCoordinator"]
 
 [triggers]
 crons = ["0 3 * * *"]

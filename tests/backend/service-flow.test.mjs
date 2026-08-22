@@ -3,14 +3,138 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createD1 } from './helpers/d1-adapter.mjs'
 import { executeCommand, executeRead } from '../../src/service.js'
+import { enqueueSaleCopy, getSaleCopy } from '../../src/sale-copy-jobs.js'
+import { streamSaleCopy } from '../../src/sale-copy.js'
 
-const migration=['0001_initial.sql','0002_access_control.sql','0003_access_settings.sql','0004_lineage_and_clutches.sql','0005_clutch_offspring.sql','0006_parrot_breed.sql','0007_sales_record_breed.sql','0008_feeding_plans.sql','0009_feeding_plan_food_types.sql','0010_feeding_plan_age_days.sql','0011_feeding_plan_enabled.sql','0012_introductions.sql','0013_supply_records.sql'].map(name=>fs.readFileSync(new URL(`../../migrations/${name}`,import.meta.url),'utf8')).join('\n')
+const migration=['0001_initial.sql','0002_access_control.sql','0003_access_settings.sql','0004_lineage_and_clutches.sql','0005_clutch_offspring.sql','0006_parrot_breed.sql','0007_sales_record_breed.sql','0008_feeding_plans.sql','0009_feeding_plan_food_types.sql','0010_feeding_plan_age_days.sql','0011_feeding_plan_enabled.sql','0012_introductions.sql','0013_supply_records.sql','0014_sale_copy_documents.sql','0015_sale_copy_streaming.sql'].map(name=>fs.readFileSync(new URL(`../../migrations/${name}`,import.meta.url),'utf8')).join('\n')
 function setup(){return{DB:createD1(migration),SHARE_TOKEN_SECRET:'share-secret-that-is-longer-than-thirty-two',MEDIA_SIGNING_SECRET:'media-secret-that-is-longer-than-thirty-two'}}
 const bird=(gender,ringNumber)=>({breed:'测试品种',species:'测试鹦鹉',ringNumber,gender,birthDate:'2025-01-01',priceCents:100000,publicIntro:'公开',privateNotes:'内部',media:[]})
 
 test('D1 schema and command receipts enforce idempotent unique rings',async()=>{const env=setup();try{const first=await executeCommand(env,'owner','parrots.create',bird('MALE','r- 001'),'create:1');const repeated=await executeCommand(env,'owner','parrots.create',bird('MALE','r- 001'),'create:1');assert.equal(repeated.id,first.id);await assert.rejects(executeCommand(env,'owner','parrots.create',bird('MALE','R-001'),'create:2'),error=>error.code==='DUPLICATE_RING');const rows=await env.DB.prepare('SELECT COUNT(*) AS count FROM parrots').first();assert.equal(rows.count,1)}finally{env.DB.close()}})
 
 test('parrots receive distinct internal IDs even without a ring number',async()=>{const env=setup();try{const first=await executeCommand(env,'owner','parrots.create',bird('MALE',''),'blank:1'),second=await executeCommand(env,'owner','parrots.create',bird('FEMALE',''),'blank:2');assert.ok(first.id);assert.notEqual(first.id,second.id);const rows=await env.DB.prepare("SELECT COUNT(*) AS count FROM parrots WHERE ring_number='' ").first();assert.equal(rows.count,2)}finally{env.DB.close()}})
+
+test('sale-copy generation uses only the selected traits and only permits sale-ready parrots', async () => {
+  const env = { ...setup(), SENSENOVA_API_KEY: 'test-key' }
+  const originalFetch = globalThis.fetch
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', { ...bird('FEMALE', 'AI-SALE-1'), privateNotes: '敏感私密内容' }, 'ai-sale:create')
+    let requestBody
+    globalThis.fetch = async (_url, options) => {
+      requestBody = JSON.parse(options.body)
+      return { ok: true, json: async () => ({ choices: [{ message: { content: '【标题】\n自养测试鹦鹉母鸟｜亲人可自提\n【正文】\n【基本情况】测试文案\n\n仅支持自提。' } }] }) }
+    }
+    const result = await executeRead(env, 'owner', 'ai.saleCopy.generate', { id: created.id, style: 'COLLOQUIAL', traits: { tameness: 'TAME', raisingMethod: 'HAND_RAISED' }, note: '可提前预约' }, 'https://api.example.com', '')
+    assert.equal(result.title, '自养测试鹦鹉母鸟｜亲人可自提')
+    assert.match(result.content, /仅支持自提/)
+    assert.equal(requestBody.model, 'deepseek-v4-flash')
+    assert.match(requestBody.messages[0].content, /已确认卖点/)
+    assert.match(requestBody.messages[0].content, /售卖类别/)
+    assert.match(requestBody.messages[0].content, /风格硬规则/)
+    assert.doesNotMatch(requestBody.messages[0].content, /敏感私密内容/)
+    assert.equal(requestBody.max_tokens, 8192)
+    assert.equal(requestBody.chat_template_kwargs, undefined)
+    const breeder = await executeCommand(env, 'owner', 'parrots.setBreeder', { id: created.id, revision: created.revision }, 'ai-sale:breeder')
+    await assert.rejects(executeRead(env, 'owner', 'ai.saleCopy.generate', { id: breeder.id }, 'https://api.example.com', ''), error => error.code === 'INVALID_STATE')
+  } finally {
+    globalThis.fetch = originalFetch
+    env.DB.close()
+  }
+})
+
+test('sale-copy generation keeps a usable document when a model returns an overly long title', async () => {
+  const env = { ...setup(), SENSENOVA_API_KEY: 'test-key', SENSENOVA_SALE_COPY_MODEL: 'deepseek-v4-flash' }
+  const originalFetch = globalThis.fetch
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', bird('FEMALE', 'AI-SALE-LONG'), 'ai-sale:long')
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: `【标题】\n${'自养鹦鹉'.repeat(30)}\n【正文】\n正文仍然可以正常发布。` } }] }) })
+    const result = await executeRead(env, 'owner', 'ai.saleCopy.generate', { id: created.id }, 'https://api.example.com', '')
+    assert.equal(result.title.length, 60)
+    assert.equal(result.content, '正文仍然可以正常发布。')
+  } finally { globalThis.fetch = originalFetch; env.DB.close() }
+})
+
+test('sale-copy uses breed when the name is only a numeric management label', async () => {
+  const env = { ...setup(), SENSENOVA_API_KEY: 'test-key' }
+  const originalFetch = globalThis.fetch
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', { ...bird('FEMALE', 'AI-CATEGORY'), breed: '虎皮', species: '244' }, 'ai-sale:category')
+    let requestBody
+    globalThis.fetch = async (_url, options) => {
+      requestBody = JSON.parse(options.body)
+      return { ok: true, json: async () => ({ choices: [{ message: { content: '【标题】\n虎皮鹦鹉｜2天\n【正文】\n【基本信息】这是一只虎皮鹦鹉。' } }] }) }
+    }
+    await executeRead(env, 'owner', 'ai.saleCopy.generate', { id: created.id }, 'https://api.example.com', '')
+    assert.match(requestBody.messages[0].content, /"售卖类别":"虎皮"/)
+    assert.doesNotMatch(requestBody.messages[0].content, /"售卖类别":"244"/)
+  } finally { globalThis.fetch = originalFetch; env.DB.close() }
+})
+
+test('sale-copy never publishes a model reasoning field as listing content', async () => {
+  const env = { ...setup(), SENSENOVA_API_KEY: 'test-key' }
+  const originalFetch = globalThis.fetch
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', bird('FEMALE', 'AI-REASONING'), 'ai-sale:reasoning')
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '', reasoning_content: '【标题】\n内部分析\n【正文】\n不应向用户展示。' } }] }) })
+    await assert.rejects(executeRead(env, 'owner', 'ai.saleCopy.generate', { id: created.id }, 'https://api.example.com', ''), error => error.code === 'AI_RESPONSE_INVALID')
+  } finally { globalThis.fetch = originalFetch; env.DB.close() }
+})
+
+test('sale-copy retries the lightweight text model when DeepSeek has no final content', async () => {
+  const env = { ...setup(), SENSENOVA_API_KEY: 'test-key', SENSENOVA_SALE_COPY_MODEL: 'deepseek-v4-flash' }
+  const originalFetch = globalThis.fetch
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', bird('FEMALE', 'AI-FALLBACK'), 'ai-sale:fallback')
+    const requestedModels = []
+    globalThis.fetch = async (_url, options) => {
+      const body = JSON.parse(options.body)
+      requestedModels.push(body.model)
+      const message = body.model === 'deepseek-v4-flash'
+        ? { content: '', reasoning_content: '不能公开的推理过程' }
+        : { content: '【标题】\n虎皮鹦鹉｜2天\n【正文】\n【基本信息】这是一只虎皮鹦鹉。' }
+      return { ok: true, json: async () => ({ choices: [{ message }] }) }
+    }
+    const result = await executeRead(env, 'owner', 'ai.saleCopy.generate', { id: created.id }, 'https://api.example.com', '')
+    assert.equal(result.title, '虎皮鹦鹉｜2天')
+    assert.deepEqual(requestedModels, ['deepseek-v4-flash', 'sensenova-6.7-flash-lite'])
+  } finally { globalThis.fetch = originalFetch; env.DB.close() }
+})
+
+test('sale-copy streaming forwards only final text deltas and parses the completed document', async () => {
+  const env = { ...setup(), SENSENOVA_API_KEY: 'test-key' }
+  const originalFetch = globalThis.fetch
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', bird('FEMALE', 'AI-STREAM'), 'ai-sale:stream')
+    const encoder = new TextEncoder()
+    globalThis.fetch = async (_url, options) => {
+      assert.equal(JSON.parse(options.body).stream, true)
+      return new Response(new ReadableStream({ start(controller) { const event = value => `data: ${JSON.stringify(value)}\n\n`; controller.enqueue(encoder.encode([event({ choices: [{ delta: { reasoning: '不展示' } }] }), event({ choices: [{ delta: { content: '【标题】\n虎皮鹦鹉｜2天\n【正文】\n' } }] }), event({ choices: [{ delta: { content: '【基本信息】这是一只虎皮鹦鹉。' } }] }), 'data: [DONE]\n\n'].join(''))); controller.close() } }), { status: 200 })
+    }
+    const chunks = []
+    const result = await streamSaleCopy(env, 'owner', { id: created.id }, value => chunks.push(value))
+    assert.equal(chunks.join(''), '【标题】\n虎皮鹦鹉｜2天\n【正文】\n【基本信息】这是一只虎皮鹦鹉。')
+    assert.equal(result.title, '虎皮鹦鹉｜2天')
+  } finally { globalThis.fetch = originalFetch; env.DB.close() }
+})
+
+test('sale-copy jobs overwrite the prior version and mark a completed copy read only after opening it', async () => {
+  const env = { ...setup(), SALE_COPY_COORDINATOR: { idFromName: name => name, get: () => ({ fetch: async () => new Response(null, { status: 204 }) }) } }
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', bird('FEMALE', 'AI-JOB-1'), 'ai-job:create')
+    await enqueueSaleCopy(env, 'owner', { id: created.id, style: 'WARM_HOME', traits: { tameness: 'TAME' } })
+    let row = await env.DB.prepare('SELECT status,title,content FROM sale_copy_documents WHERE parrot_id=?').bind(created.id).first()
+    assert.equal(row.status, 'PENDING')
+    await env.DB.prepare("UPDATE sale_copy_documents SET status='READY',title='旧标题',content='旧正文',expires_at=? WHERE parrot_id=?").bind('2026-08-24T00:00:00.000Z', created.id).run()
+    await enqueueSaleCopy(env, 'owner', { id: created.id, style: 'CLEAR_INFO', traits: { independentFeeding: 'INDEPENDENT' } })
+    row = await env.DB.prepare('SELECT status,title,content FROM sale_copy_documents WHERE parrot_id=?').bind(created.id).first()
+    assert.equal(row.status, 'PENDING')
+    assert.equal(row.title, '')
+    assert.equal(row.content, '')
+    await env.DB.prepare("UPDATE sale_copy_documents SET status='READY',title='新标题',content='新正文',expires_at=? WHERE parrot_id=?").bind('2026-08-24T00:00:00.000Z', created.id).run()
+    assert.equal((await getSaleCopy(env, 'owner', created.id)).unread, true)
+    assert.equal((await getSaleCopy(env, 'owner', created.id, true)).unread, false)
+  } finally { env.DB.close() }
+})
 
 test('introduced birds keep their source through growing, breeder, and sale transitions',async()=>{const env=setup();try{const introduced=await executeCommand(env,'owner','introductions.create',{...bird('FEMALE','INTRO-1'),purchaseDate:'2026-08-01'},'introduction:create');let row=await env.DB.prepare('SELECT record_source,purchase_date,introduction_stage,status FROM parrots WHERE id=?').bind(introduced.id).first();assert.equal(row.record_source,'INTRODUCTION');assert.equal(row.purchase_date,'2026-08-01');assert.equal(row.introduction_stage,'GROWING');assert.equal(row.status,'FOR_SALE');await assert.rejects(executeCommand(env,'owner','sales.create',{parrotId:introduced.id,parrotRevision:introduced.revision,buyer:'买家',buyerContact:'',saleDate:'2026-08-02',priceCents:90000},'introduction:no-sale'),error=>error.code==='INVALID_STATE');const breeder=await executeCommand(env,'owner','parrots.setBreeder',{id:introduced.id,revision:introduced.revision},'introduction:breeder');assert.equal((await env.DB.prepare('SELECT status FROM parrots WHERE id=?').bind(introduced.id).first()).status,'BREEDER');const growing=await executeCommand(env,'owner','parrots.unsetBreeder',{id:introduced.id,revision:breeder.revision},'introduction:unset');row=await env.DB.prepare('SELECT record_source,introduction_stage FROM parrots WHERE id=?').bind(introduced.id).first();assert.equal(row.record_source,'INTRODUCTION');assert.equal(row.introduction_stage,'GROWING');const forSale=await executeCommand(env,'owner','introductions.markForSale',{id:introduced.id,revision:growing.revision},'introduction:for-sale');row=await env.DB.prepare('SELECT record_source,introduction_stage FROM parrots WHERE id=?').bind(introduced.id).first();assert.equal(row.record_source,'INTRODUCTION');assert.equal(row.introduction_stage,'FOR_SALE');const sale=await executeCommand(env,'owner','sales.create',{parrotId:introduced.id,parrotRevision:forSale.revision,buyer:'买家',buyerContact:'',saleDate:'2026-08-02',priceCents:90000},'introduction:sale');assert.ok(sale.id)}finally{env.DB.close()}})
 
