@@ -9,7 +9,7 @@ export async function owned(env, table, idValue, owner, includeDeleted = false) 
   return row
 }
 export function revisionCheck(row, expected) { ensure(Number(row.revision) === Number(expected), 'CONFLICT', '记录已被其他操作更新，请刷新后重试', 409, { currentRevision: row.revision }) }
-export function auditStatement(env, owner, action, targetType, targetId, requestId, before, after) { return statement(env, 'INSERT INTO audit_logs (id,owner_open_id,action,target_type,target_id,request_id,before_json,after_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)', id(), owner, action, targetType, targetId, requestId, json(before), json(after), nowIso()) }
+export function auditStatement(env, owner, action, targetType, targetId, requestId, before, after, actorOpenId = null) { return statement(env, 'INSERT INTO audit_logs (id,owner_open_id,action,target_type,target_id,request_id,before_json,after_json,created_at,actor_open_id) VALUES (?,?,?,?,?,?,?,?,?,?)', id(), owner, action, targetType, targetId, requestId, json(before), json(after), nowIso(), actorOpenId || null) }
 export function activeWhere() { return 'owner_open_id = ? AND deleted_at IS NULL' }
 export function rowMedia(row) { return parseJson(row && row.media_json, []) }
 export async function mediaItems(env, items, secret, baseUrl, _token) {

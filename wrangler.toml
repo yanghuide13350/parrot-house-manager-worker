@@ -36,4 +36,4 @@ tag = "v2"
 new_sqlite_classes = ["SaleCopyCoordinator"]
 
 [triggers]
-crons = ["0 3 * * *"]
+crons = ["0 * * * *"]
