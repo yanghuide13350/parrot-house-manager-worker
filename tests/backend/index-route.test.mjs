@@ -45,6 +45,26 @@ test('ADMIN_OPENIDS members share the primary owner workspace', async () => {
   } finally { env.DB.close() }
 })
 
+test('notification lists are scoped to the authorized user instead of the shared workspace owner', async () => {
+  const { signSession } = await import('../../src/core.js')
+  const { createD1 } = await import('./helpers/d1-adapter.mjs')
+  const fs = await import('node:fs')
+  const migration = ['0001_initial.sql', '0002_access_control.sql', '0003_access_settings.sql', '0006_parrot_breed.sql', '0016_notifications.sql'].map(name => fs.readFileSync(new URL(`../../migrations/${name}`, import.meta.url), 'utf8')).join('\n')
+  const secret = 'session-secret-that-is-longer-than-thirty-two'
+  const env = { DB: createD1(migration), SESSION_SECRET: secret, OWNER_OPENID: 'owner-open-id', ADMIN_OPENIDS: 'user-a,user-b' }
+  try {
+    await env.DB.prepare('INSERT INTO notifications (id,owner_open_id,type,title,content,target_type,target_id,read_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)').bind('notice-a', 'user-a', 'SALE_COPY', 'A 完成', '', 'PARROT_DETAIL', 'parrot-a', null, '2026-08-29T00:00:00.000Z').run()
+    await env.DB.prepare('INSERT INTO notifications (id,owner_open_id,type,title,content,target_type,target_id,read_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)').bind('notice-b', 'user-b', 'SALE_COPY', 'B 完成', '', 'PARROT_DETAIL', 'parrot-b', null, '2026-08-29T00:01:00.000Z').run()
+    for (const [openId, expectedId] of [['user-a', 'notice-a'], ['user-b', 'notice-b']]) {
+      const token = await signSession(openId, secret)
+      const response = await worker.fetch(new Request('https://api.example.com/api/manage', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'notifications.list', input: {} }) }), env)
+      assert.equal(response.status, 200)
+      const body = await response.json()
+      assert.deepEqual(body.data.items.map(item => item.id), [expectedId])
+    }
+  } finally { env.DB.close() }
+})
+
 test('only the owner or an administrator may remove completed hatching records', async () => {
   const { signSession } = await import('../../src/core.js')
   const { createD1 } = await import('./helpers/d1-adapter.mjs')

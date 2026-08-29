@@ -46,6 +46,16 @@ test('notifications support owner-scoped read state and real deletion', async ()
   } finally { env.DB.close() }
 })
 
+test('sale-copy jobs retain the initiating user as the notification recipient', async () => {
+  const env = { ...setup(), SALE_COPY_COORDINATOR: { idFromName: name => name, get: () => ({ fetch: async () => new Response(null, { status: 204 }) }) } }
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', bird('FEMALE', 'NOTICE-RECIPIENT'), 'notice-recipient:create')
+    await enqueueSaleCopy(env, 'owner', { id: created.id }, 'user-a')
+    const row = await env.DB.prepare('SELECT request_json FROM sale_copy_documents WHERE parrot_id=?').bind(created.id).first()
+    assert.equal(JSON.parse(row.request_json).notificationRecipient, 'user-a')
+  } finally { env.DB.close() }
+})
+
 test('sale-copy generation uses only the selected traits and only permits sale-ready parrots', async () => {
   const env = { ...setup(), SENSENOVA_API_KEY: 'test-key' }
   const originalFetch = globalThis.fetch

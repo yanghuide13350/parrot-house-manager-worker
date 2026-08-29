@@ -47,15 +47,16 @@ async function manage(request,env){
   if(action.startsWith('access.')) return handleAccessAction(env,session,action,input.input||{})
   ensure(session.authorized,'UNAUTHORIZED','当前微信账号无管理权限',403)
   const currentOwner=env.OWNER_OPENID
-  if(action==='ai.saleCopy.enqueue') return enqueueSaleCopy(env,currentOwner,input.input||{})
+  const notificationRecipient=session.openId
+  if(action==='ai.saleCopy.enqueue') return enqueueSaleCopy(env,currentOwner,input.input||{},notificationRecipient)
   if(action==='ai.saleCopy.get') return getSaleCopy(env,currentOwner,(input.input||{}).id)
   if(action==='ai.saleCopy.open') return getSaleCopy(env,currentOwner,(input.input||{}).id,true)
-  if(action==='notifications.list') return listNotifications(env,currentOwner)
-  if(action==='notifications.read') return readNotification(env,currentOwner,(input.input||{}).id)
-  if(action==='notifications.setRead') return setNotificationRead(env,currentOwner,(input.input||{}).id,Boolean((input.input||{}).read))
-  if(action==='notifications.delete') return deleteNotification(env,currentOwner,(input.input||{}).id)
-  if(action==='notifications.readAll') return readAllNotifications(env,currentOwner)
-  if(action==='notifications.deleteAll') return deleteAllNotifications(env,currentOwner)
+  if(action==='notifications.list') return listNotifications(env,notificationRecipient)
+  if(action==='notifications.read') return readNotification(env,notificationRecipient,(input.input||{}).id)
+  if(action==='notifications.setRead') return setNotificationRead(env,notificationRecipient,(input.input||{}).id,Boolean((input.input||{}).read))
+  if(action==='notifications.delete') return deleteNotification(env,notificationRecipient,(input.input||{}).id)
+  if(action==='notifications.readAll') return readAllNotifications(env,notificationRecipient)
+  if(action==='notifications.deleteAll') return deleteAllNotifications(env,notificationRecipient)
   if(WRITE_ACTIONS.has(action)){
     if(action==='hatching.delete') ensure(session.role==='OWNER'||session.role==='ADMIN','FORBIDDEN','仅主账号或管理员可移除已完成档案',403)
     if(['parrots.delete','parrots.restore'].includes(action)) ensure(session.role==='OWNER'||session.role==='ADMIN','FORBIDDEN','仅主账号或管理员可执行删除和恢复',403)
@@ -69,7 +70,7 @@ async function manage(request,env){
   return executeRead(env,currentOwner,action,input.input||{},new URL(request.url).origin,bearer(request))
 }
 
-async function notificationSocketRoute(request,env){const currentOwner=await owner(request,env);ensure((request.headers.get('upgrade')||'').toLowerCase()==='websocket','VALIDATION_ERROR','需要 WebSocket 连接',426);return env.SALE_COPY_COORDINATOR.get(env.SALE_COPY_COORDINATOR.idFromName(currentOwner)).fetch(new Request('https://sale-copy/socket',request))}
+async function notificationSocketRoute(request,env){const session=await currentSession(request,env);ensure(session.authorized,'UNAUTHORIZED','当前微信账号无管理权限',403);ensure((request.headers.get('upgrade')||'').toLowerCase()==='websocket','VALIDATION_ERROR','需要 WebSocket 连接',426);return env.SALE_COPY_COORDINATOR.get(env.SALE_COPY_COORDINATOR.idFromName(session.openId)).fetch(new Request('https://sale-copy/socket',request))}
 
 async function createUpload(request,env){const currentOwner=await owner(request,env),input=await body(request),type=input.type;ensure(['image','video'].includes(type),'VALIDATION_ERROR','媒体类型无效');const limit=type==='video'?VIDEO_LIMIT:IMAGE_LIMIT,size=Number(input.size);ensure(Number.isSafeInteger(size)&&size>0&&size<=limit,'VALIDATION_ERROR','媒体文件超过大小限制');const requestId=text(input.requestId,'requestId',100),assetId=(await sha256(`${currentOwner}:${requestId}:media`)).slice(0,36),existing=await first(env,'SELECT * FROM media_assets WHERE id=? AND owner_open_id=?',assetId,currentOwner);if(existing){ensure(existing.type===type&&Number(existing.size)===size,'CONFLICT','上传请求号已用于其他媒体',409);return{assetId,uploadId:existing.upload_id,partSize:PART_SIZE,type:existing.type,size:existing.size}}const fileName=text(input.fileName,'文件名',200),extension=(fileName.split('.').pop()||'bin').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,8)||'bin',imageExtensions=new Set(['jpg','jpeg','png','webp','gif']),videoExtensions=new Set(['mp4','mov','m4v']);ensure(!(type==='image'&&videoExtensions.has(extension))&&!(type==='video'&&imageExtensions.has(extension)),'VALIDATION_ERROR','媒体类型与文件扩展名不匹配');const key=`private/${currentOwner}/${assetId}.${extension}`,mime=type==='video'?(extension==='mov'?'video/quicktime':'video/mp4'):({jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',gif:'image/gif'}[extension]||'application/octet-stream'),uploadId=await cosCreateMultipartUpload(env,key,mime),now=nowIso();await env.DB.prepare('INSERT INTO media_assets (id,owner_open_id,type,size,file_name,object_key,upload_id,mime,source,status,revision,created_at,updated_at,deleted_at,deleted_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(assetId,currentOwner,type,size,fileName,key,uploadId,mime,'LOCAL_UPLOAD','PENDING',1,now,now,null,null).run();return{assetId,uploadId,partSize:PART_SIZE,type,size}}
 

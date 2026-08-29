@@ -77,19 +77,24 @@ export async function deleteAllNotifications(env, owner) {
 }
 
 async function notifySaleCopyComplete(env, job, failed = false) {
+  // 档案仍归主账号共享；通知只归发起本次生成的微信用户。
+  // 旧任务没有该字段时，继续投递给档案主账号，避免升级后丢失历史任务的结果。
+  const request = parseJson(job.request_json, {}) || {}
+  const notificationRecipient = text(request.notificationRecipient || job.owner_open_id, '通知接收人', 200)
   const createdAt = nowIso(), raw = { id: crypto.randomUUID(), type: 'SALE_COPY', title: failed ? 'AI 售卖文案生成失败' : 'AI 售卖文案已完成', targetType: 'PARROT_DETAIL', targetId: job.parrot_id, createdAt }
   // 同一只鸟只保留最新一条文案通知，避免用户连续生成后堆积重复提醒。
-  await env.DB.prepare('DELETE FROM notifications WHERE owner_open_id=? AND type=? AND target_type=? AND target_id=?').bind(job.owner_open_id, raw.type, raw.targetType, raw.targetId).run()
-  await env.DB.prepare('INSERT INTO notifications (id,owner_open_id,type,title,content,target_type,target_id,read_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)').bind(raw.id, job.owner_open_id, raw.type, raw.title, '', raw.targetType, raw.targetId, null, createdAt).run()
-  const notification = notificationView(await notificationById(env, job.owner_open_id, raw.id))
-  await env.SALE_COPY_COORDINATOR.get(env.SALE_COPY_COORDINATOR.idFromName(job.owner_open_id)).fetch('https://sale-copy/notification', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(notification) })
+  await env.DB.prepare('DELETE FROM notifications WHERE owner_open_id=? AND type=? AND target_type=? AND target_id=?').bind(notificationRecipient, raw.type, raw.targetType, raw.targetId).run()
+  await env.DB.prepare('INSERT INTO notifications (id,owner_open_id,type,title,content,target_type,target_id,read_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)').bind(raw.id, notificationRecipient, raw.type, raw.title, '', raw.targetType, raw.targetId, null, createdAt).run()
+  const notification = notificationView(await notificationById(env, notificationRecipient, raw.id))
+  await env.SALE_COPY_COORDINATOR.get(env.SALE_COPY_COORDINATOR.idFromName(notificationRecipient)).fetch('https://sale-copy/notification', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(notification) })
 }
 
-async function createSaleCopyJob(env, owner, input) {
+async function createSaleCopyJob(env, owner, input, notificationRecipient = owner) {
   const parrotId = text(input.id, '鹦鹉', 80)
+  const recipient = text(notificationRecipient, '通知接收人', 200)
   await saleCopyBird(env, owner, input)
-  const now = nowIso(), token = crypto.randomUUID(), request = { id: parrotId, style: input.style || 'PROFESSIONAL', traits: input.traits || {}, note: input.note || '' }
-  await env.DB.prepare("DELETE FROM notifications WHERE owner_open_id=? AND type='SALE_COPY' AND target_type='PARROT_DETAIL' AND target_id=?").bind(owner, parrotId).run()
+  const now = nowIso(), token = crypto.randomUUID(), request = { id: parrotId, style: input.style || 'PROFESSIONAL', traits: input.traits || {}, note: input.note || '', notificationRecipient: recipient }
+  await env.DB.prepare("DELETE FROM notifications WHERE owner_open_id=? AND type='SALE_COPY' AND target_type='PARROT_DETAIL' AND target_id=?").bind(recipient, parrotId).run()
   await env.DB.prepare(`INSERT INTO sale_copy_documents (id,owner_open_id,parrot_id,generation_token,request_json,status,title,content,error_message,completed_at,expires_at,viewed_at,created_at,updated_at)
     VALUES (?,?,?,?,?,?,'','','',NULL,NULL,NULL,?,?)
     ON CONFLICT(owner_open_id,parrot_id) DO UPDATE SET generation_token=excluded.generation_token,request_json=excluded.request_json,status=excluded.status,title='',content='',error_message='',completed_at=NULL,expires_at=NULL,viewed_at=NULL,updated_at=excluded.updated_at`)
@@ -99,8 +104,8 @@ async function createSaleCopyJob(env, owner, input) {
   return { id: parrotId, token, request }
 }
 
-export async function enqueueSaleCopy(env, owner, input) {
-  await createSaleCopyJob(env, owner, input)
+export async function enqueueSaleCopy(env, owner, input, notificationRecipient = owner) {
+  await createSaleCopyJob(env, owner, input, notificationRecipient)
   return { status: 'PENDING' }
 }
 
