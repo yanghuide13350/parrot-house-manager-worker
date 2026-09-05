@@ -1,0 +1,1 @@
+ALTER TABLE parrots ADD COLUMN traits_json TEXT NOT NULL DEFAULT '{}';

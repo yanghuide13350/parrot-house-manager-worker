@@ -6,13 +6,28 @@ import { executeCommand, executeRead, purgeExpiredParrots } from '../../src/serv
 import { deleteAllNotifications, deleteNotification, enqueueSaleCopy, getSaleCopy, listNotifications, readAllNotifications, readNotification, setNotificationRead } from '../../src/sale-copy-jobs.js'
 import { streamSaleCopy } from '../../src/sale-copy.js'
 
-const migration=['0001_initial.sql','0002_access_control.sql','0003_access_settings.sql','0004_lineage_and_clutches.sql','0005_clutch_offspring.sql','0006_parrot_breed.sql','0007_sales_record_breed.sql','0008_feeding_plans.sql','0009_feeding_plan_food_types.sql','0010_feeding_plan_age_days.sql','0011_feeding_plan_enabled.sql','0012_introductions.sql','0013_supply_records.sql','0014_sale_copy_documents.sql','0015_sale_copy_streaming.sql','0016_notifications.sql','0017_parrot_recycle_bin.sql'].map(name=>fs.readFileSync(new URL(`../../migrations/${name}`,import.meta.url),'utf8')).join('\n')
+const migration=['0001_initial.sql','0002_access_control.sql','0003_access_settings.sql','0004_lineage_and_clutches.sql','0005_clutch_offspring.sql','0006_parrot_breed.sql','0007_sales_record_breed.sql','0008_feeding_plans.sql','0009_feeding_plan_food_types.sql','0010_feeding_plan_age_days.sql','0011_feeding_plan_enabled.sql','0012_introductions.sql','0013_supply_records.sql','0014_sale_copy_documents.sql','0015_sale_copy_streaming.sql','0016_notifications.sql','0017_parrot_recycle_bin.sql','0018_parrot_traits.sql'].map(name=>fs.readFileSync(new URL(`../../migrations/${name}`,import.meta.url),'utf8')).join('\n')
 function setup(){return{DB:createD1(migration),SHARE_TOKEN_SECRET:'share-secret-that-is-longer-than-thirty-two',MEDIA_SIGNING_SECRET:'media-secret-that-is-longer-than-thirty-two'}}
 const bird=(gender,ringNumber)=>({breed:'测试品种',species:'测试鹦鹉',ringNumber,gender,birthDate:'2025-01-01',priceCents:100000,publicIntro:'公开',privateNotes:'内部',media:[]})
 
 test('D1 schema and command receipts enforce idempotent unique rings',async()=>{const env=setup();try{const first=await executeCommand(env,'owner','parrots.create',bird('MALE','r- 001'),'create:1');const repeated=await executeCommand(env,'owner','parrots.create',bird('MALE','r- 001'),'create:1');assert.equal(repeated.id,first.id);await assert.rejects(executeCommand(env,'owner','parrots.create',bird('MALE','R-001'),'create:2'),error=>error.code==='DUPLICATE_RING');const rows=await env.DB.prepare('SELECT COUNT(*) AS count FROM parrots').first();assert.equal(rows.count,1)}finally{env.DB.close()}})
 
 test('parrots receive distinct internal IDs even without a ring number',async()=>{const env=setup();try{const first=await executeCommand(env,'owner','parrots.create',bird('MALE',''),'blank:1'),second=await executeCommand(env,'owner','parrots.create',bird('FEMALE',''),'blank:2');assert.ok(first.id);assert.notEqual(first.id,second.id);const rows=await env.DB.prepare("SELECT COUNT(*) AS count FROM parrots WHERE ring_number='' ").first();assert.equal(rows.count,2)}finally{env.DB.close()}})
+
+test('parrot traits persist, update, and reject invalid combinations', async () => {
+  const env = setup()
+  try {
+    const traits = { tameness: 'TAME', raisingMethod: 'HAND_RAISED', feeding: 'INDEPENDENT', featherCondition: 'CLEAN' }
+    const created = await executeCommand(env, 'owner', 'parrots.create', { ...bird('FEMALE', 'TRAIT-1'), traits }, 'traits:create')
+    let item = (await executeRead(env, 'owner', 'parrots.list', {}, 'https://api.example.com', '')).items[0]
+    assert.deepEqual(item.traits, traits)
+    const updatedTraits = { tameness: 'SHY', raisingMethod: 'CAGE_RAISED', feeding: 'LEARNING', featherCondition: 'BALD' }
+    await executeCommand(env, 'owner', 'parrots.update', { id: created.id, revision: created.revision, updates: { traits: updatedTraits } }, 'traits:update')
+    item = (await executeRead(env, 'owner', 'parrots.list', {}, 'https://api.example.com', '')).items[0]
+    assert.deepEqual(item.traits, updatedTraits)
+    await assert.rejects(executeCommand(env, 'owner', 'parrots.update', { id: created.id, revision: 2, updates: { traits: { tameness: 'TAME', featherCondition: 'UNKNOWN' } } }, 'traits:invalid'), error => error.code === 'VALIDATION_ERROR')
+  } finally { env.DB.close() }
+})
 
 test('notifications retain unread sale-copy completion messages and mark only the selected message read', async () => {
   const env = setup()
