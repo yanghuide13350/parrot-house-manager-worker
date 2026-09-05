@@ -93,7 +93,7 @@ async function createSaleCopyJob(env, owner, input, notificationRecipient = owne
   const parrotId = text(input.id, '鹦鹉', 80)
   const recipient = text(notificationRecipient, '通知接收人', 200)
   await saleCopyBird(env, owner, input)
-  const now = nowIso(), token = crypto.randomUUID(), request = { id: parrotId, style: input.style || 'PROFESSIONAL', traits: input.traits || {}, note: input.note || '', notificationRecipient: recipient }
+  const now = nowIso(), token = crypto.randomUUID(), request = { id: parrotId, style: input.style || 'PROFESSIONAL', note: input.note || '', notificationRecipient: recipient }
   await env.DB.prepare("DELETE FROM notifications WHERE owner_open_id=? AND type='SALE_COPY' AND target_type='PARROT_DETAIL' AND target_id=?").bind(recipient, parrotId).run()
   await env.DB.prepare(`INSERT INTO sale_copy_documents (id,owner_open_id,parrot_id,generation_token,request_json,status,title,content,error_message,completed_at,expires_at,viewed_at,created_at,updated_at)
     VALUES (?,?,?,?,?,?,'','','',NULL,NULL,NULL,?,?)

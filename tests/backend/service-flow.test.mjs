@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { createD1 } from './helpers/d1-adapter.mjs'
 import { executeCommand, executeRead, purgeExpiredParrots } from '../../src/service.js'
 import { deleteAllNotifications, deleteNotification, enqueueSaleCopy, getSaleCopy, listNotifications, readAllNotifications, readNotification, setNotificationRead } from '../../src/sale-copy-jobs.js'
-import { streamSaleCopy } from '../../src/sale-copy.js'
+import { generateSaleCopy, streamSaleCopy } from '../../src/sale-copy.js'
 
 const migration=['0001_initial.sql','0002_access_control.sql','0003_access_settings.sql','0004_lineage_and_clutches.sql','0005_clutch_offspring.sql','0006_parrot_breed.sql','0007_sales_record_breed.sql','0008_feeding_plans.sql','0009_feeding_plan_food_types.sql','0010_feeding_plan_age_days.sql','0011_feeding_plan_enabled.sql','0012_introductions.sql','0013_supply_records.sql','0014_sale_copy_documents.sql','0015_sale_copy_streaming.sql','0016_notifications.sql','0017_parrot_recycle_bin.sql','0018_parrot_traits.sql'].map(name=>fs.readFileSync(new URL(`../../migrations/${name}`,import.meta.url),'utf8')).join('\n')
 function setup(){return{DB:createD1(migration),SHARE_TOKEN_SECRET:'share-secret-that-is-longer-than-thirty-two',MEDIA_SIGNING_SECRET:'media-secret-that-is-longer-than-thirty-two'}}
@@ -109,6 +109,28 @@ test('sale-copy generation keeps a usable document when a model returns an overl
     assert.equal(result.title.length, 60)
     assert.equal(result.content, '正文仍然可以正常发布。')
   } finally { globalThis.fetch = originalFetch; env.DB.close() }
+})
+
+test('sale-copy generation uses the bird profile traits when the request only has style and note', async () => {
+  const env = { ...setup(), SENSENOVA_API_KEY: 'test-key' }
+  const originalFetch = globalThis.fetch
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', { ...bird('FEMALE', 'AI-PROFILE-TRAITS'), traits: { tameness: 'TAME', raisingMethod: 'HAND_RAISED', feeding: 'INDEPENDENT', featherCondition: 'BALD' } }, 'ai-profile-traits:create')
+    let requestBody
+    globalThis.fetch = async (_url, options) => {
+      requestBody = JSON.parse(options.body)
+      return { ok: true, json: async () => ({ choices: [{ message: { content: '【标题】\n测试鹦鹉｜母的\n【正文】\n测试正文。' } }] }) }
+    }
+    await generateSaleCopy(env, 'owner', { id: created.id, style: 'CONCISE', note: '可预约看鸟' })
+    assert.match(requestBody.messages[0].content, /亲人/)
+    assert.match(requestBody.messages[0].content, /手养/)
+    assert.match(requestBody.messages[0].content, /独立吃食/)
+    assert.match(requestBody.messages[0].content, /秃头/)
+    assert.match(requestBody.messages[0].content, /可预约看鸟/)
+  } finally {
+    globalThis.fetch = originalFetch
+    env.DB.close()
+  }
 })
 
 test('sale-copy uses breed when the name is only a numeric management label', async () => {

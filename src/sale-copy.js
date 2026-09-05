@@ -1,4 +1,4 @@
-import { ApiError, STATUS, ensure, text } from './core.js'
+import { ApiError, STATUS, ensure, parseJson, text } from './core.js'
 import { owned } from './db.js'
 
 const SENSENOVA_URL = 'https://token.sensenova.cn/v1/chat/completions'
@@ -9,7 +9,7 @@ const TRAITS = {
   tameness: new Set(['TAME', 'SHY']),
   raisingMethod: new Set(['HAND_RAISED', 'CAGE_RAISED']),
   independentFeeding: new Set(['INDEPENDENT', 'LEARNING', 'ASSISTED']),
-  featherCondition: new Set(['CLEAN', 'MIXED'])
+  featherCondition: new Set(['CLEAN', 'MIXED', 'BALD'])
 }
 
 const SELLER_PROFILE = Object.freeze({
@@ -39,7 +39,7 @@ const TRAIT_LABELS = Object.freeze({
   tameness: { TAME: '亲人', SHY: '不亲人，性格偏慢热' },
   raisingMethod: { HAND_RAISED: '手养', CAGE_RAISED: '笼养' },
   independentFeeding: { INDEPENDENT: '独立吃食', LEARNING: '正在学吃食', ASSISTED: '还需辅助喂养' },
-  featherCondition: { CLEAN: '没有杂毛', MIXED: '有杂毛，羽况以实拍为准' }
+  featherCondition: { CLEAN: '没有杂毛', MIXED: '有杂毛，羽况以实拍为准', BALD: '秃头，羽况以实拍为准' }
 })
 
 export function parseSaleCopy(value) {
@@ -72,6 +72,11 @@ function normalizeTraits(input) {
   return output
 }
 
+function profileTraits(bird) {
+  const source = parseJson(bird.traits_json, {})
+  return { tameness: source.tameness || '', raisingMethod: source.raisingMethod || '', independentFeeding: source.feeding || '', featherCondition: source.featherCondition || '' }
+}
+
 function saleAge(birthDate) {
   const start = new Date(`${birthDate}T00:00:00+08:00`).getTime()
   const days = Math.max(0, Math.floor((Date.now() - start) / 86400000))
@@ -100,7 +105,8 @@ function parentInfo(value, label) {
 export function saleCopyPrompt(bird, input) {
   const style = String(input.style || 'PROFESSIONAL')
   ensure(STYLES.has(style), 'VALIDATION_ERROR', '文案风格无效')
-  const traits = normalizeTraits(input.traits)
+  const suppliedTraits = input.traits && typeof input.traits === 'object' ? input.traits : {}
+  const traits = normalizeTraits(Object.keys(suppliedTraits).length ? suppliedTraits : profileTraits(bird))
   const note = text(input.note, '备注', 300, false)
   const facts = {
     售卖类别: saleCategory(bird),
