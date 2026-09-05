@@ -211,3 +211,61 @@ test('feeding plans support formula, mixed and solid food types',async()=>{const
 test('enabled feeding plans reject overlapping ages for the same breed only',async()=>{const env=setup();try{const base={species:'虎皮',stage:'雏鸟',ageFromMonths:0,ageFromDays:0,ageToMonths:0,ageToDays:30,feedingType:'FORMULA',formulaName:'A21',waterMl:30,powderScoops:'3',temperatureMin:38,temperatureMax:40,feedingsPerDay:3,amountMl:'8ml',feedingMethod:'针管',temperatureCheck:'温度计',preparationNotes:'现配',seedFoodName:'',seedFoodAmount:'',seedFoodNotes:'',feedingNotes:'慢喂',fullnessNotes:'观察',warningNotes:'异常联系'};const first=await executeCommand(env,'owner','feedingPlans.create',{...base,name:'虎皮 0-30 天'},'enabled:first'),adjacent=await executeCommand(env,'owner','feedingPlans.create',{...base,name:'虎皮 31-60 天',ageFromMonths:1,ageFromDays:0,ageToMonths:1,ageToDays:29},'enabled:adjacent'),overlap=await executeCommand(env,'owner','feedingPlans.create',{...base,name:'虎皮 25-55 天',ageFromMonths:0,ageFromDays:25,ageToMonths:1,ageToDays:24},'enabled:overlap'),otherBreed=await executeCommand(env,'owner','feedingPlans.create',{...base,name:'玄凤 25-55 天',species:'玄凤',ageFromMonths:0,ageFromDays:25,ageToMonths:1,ageToDays:24},'enabled:other-breed');const active=await executeCommand(env,'owner','feedingPlans.setEnabled',{id:first.id,revision:first.revision,enabled:true},'enabled:on');assert.equal(active.isEnabled,true);const adjacentEnabled=await executeCommand(env,'owner','feedingPlans.setEnabled',{id:adjacent.id,revision:adjacent.revision,enabled:true},'enabled:adjacent-on');assert.equal(adjacentEnabled.isEnabled,true);await assert.rejects(executeCommand(env,'owner','feedingPlans.setEnabled',{id:overlap.id,revision:overlap.revision,enabled:true},'enabled:conflict'),error=>error.code==='CONFLICT');const otherBreedEnabled=await executeCommand(env,'owner','feedingPlans.setEnabled',{id:otherBreed.id,revision:otherBreed.revision,enabled:true},'enabled:other-breed-on');assert.equal(otherBreedEnabled.isEnabled,true)}finally{env.DB.close()}})
 
 test('enabled feeding plans cannot be edited or deleted, while disabled plans are physically deleted',async()=>{const env=setup();try{const input={name:'可管理方案',species:'玄凤',stage:'雏鸟',ageFromMonths:0,ageFromDays:0,ageToMonths:1,ageToDays:0,feedingType:'FORMULA',formulaName:'A21',waterMl:30,powderScoops:'3',temperatureMin:38,temperatureMax:40,feedingsPerDay:3,amountMl:'8ml',feedingMethod:'针管',temperatureCheck:'温度计',preparationNotes:'现配',seedFoodName:'',seedFoodAmount:'',seedFoodNotes:'',feedingNotes:'慢喂',fullnessNotes:'观察',warningNotes:'异常联系'},plan=await executeCommand(env,'owner','feedingPlans.create',input,'feeding:lock-create'),birdRecord=await executeCommand(env,'owner','parrots.create',bird('MALE','FEED-LOCK-1'),'feeding:lock-bird'),linked=await executeCommand(env,'owner','parrots.setFeedingPlan',{id:birdRecord.id,revision:birdRecord.revision,feedingPlanId:plan.id},'feeding:lock-link'),enabled=await executeCommand(env,'owner','feedingPlans.setEnabled',{id:plan.id,revision:plan.revision,enabled:true},'feeding:lock-enable');await assert.rejects(executeCommand(env,'owner','feedingPlans.update',{...input,id:plan.id,revision:enabled.revision,name:'不可修改'},'feeding:lock-update'),error=>error.code==='INVALID_STATE');await assert.rejects(executeCommand(env,'owner','feedingPlans.delete',{id:plan.id,revision:enabled.revision},'feeding:lock-delete'),error=>error.code==='INVALID_STATE');const disabled=await executeCommand(env,'owner','feedingPlans.setEnabled',{id:plan.id,revision:enabled.revision,enabled:false},'feeding:lock-disable');await executeCommand(env,'owner','feedingPlans.delete',{id:plan.id,revision:disabled.revision},'feeding:lock-hard-delete');const row=await env.DB.prepare('SELECT COUNT(*) AS count FROM feeding_plans WHERE id=?').bind(plan.id).first(),linkedBird=await env.DB.prepare('SELECT feeding_plan_id FROM parrots WHERE id=?').bind(linked.id).first();assert.equal(row.count,0);assert.equal(linkedBird.feeding_plan_id,null)}finally{env.DB.close()}})
+
+test('deleting an accidental sale restores inventory and statistics and permits resale', async () => {
+  const env = setup()
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', bird('FEMALE', 'UNDO-SALE'), 'undo:create')
+    const input = { parrotId: created.id, parrotRevision: 1, buyer: '误操作买家', saleDate: '2026-09-05', priceCents: 39800 }
+    const sale = await executeCommand(env, 'owner', 'sales.create', input, 'undo:sale')
+    const deleted = await executeCommand(env, 'owner', 'sales.delete', { id: sale.id, revision: 1 }, 'undo:delete')
+    assert.equal(deleted.deleted, true)
+    assert.deepEqual(await executeCommand(env, 'owner', 'sales.delete', { id: sale.id, revision: 1 }, 'undo:delete'), deleted)
+    assert.equal((await executeRead(env, 'owner', 'sales.list', {}, '', '')).items.length, 0)
+    const stats = (await executeRead(env, 'owner', 'dashboard.get', {}, '', '')).stats
+    assert.equal(stats.forSale, 1)
+    assert.equal(stats.sold, 0)
+    assert.equal(stats.salesTotal, 0)
+    assert.equal(stats.revenueCents, 0)
+    assert.equal(stats.returnRate, 0)
+    const restored = await env.DB.prepare('SELECT * FROM parrots WHERE id=?').bind(created.id).first()
+    assert.equal(restored.status, 'FOR_SALE')
+    assert.equal(restored.price_cents, bird('FEMALE', 'UNDO-SALE').priceCents)
+    const resale = await executeCommand(env, 'owner', 'sales.create', { ...input, parrotRevision: restored.revision }, 'undo:resale')
+    assert.notEqual(resale.id, sale.id)
+    await assert.rejects(executeCommand(env, 'owner', 'sales.delete', { id: sale.id, revision: 1 }, 'undo:old'), error => error.code === 'NOT_FOUND')
+    assert.equal((await env.DB.prepare('SELECT status FROM parrots WHERE id=?').bind(created.id).first()).status, 'SOLD')
+  } finally { env.DB.close() }
+})
+
+test('sale deletion rejects another owner, stale revisions and returned sales', async () => {
+  const env = setup()
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', bird('MALE', 'UNDO-GUARDS'), 'guard:create')
+    const sale = await executeCommand(env, 'owner', 'sales.create', { parrotId: created.id, parrotRevision: 1, buyer: '买家', saleDate: '2026-09-05', priceCents: 100 }, 'guard:sale')
+    await assert.rejects(executeCommand(env, 'other', 'sales.delete', { id: sale.id, revision: 1 }, 'guard:other'), error => error.code === 'NOT_FOUND')
+    await assert.rejects(executeCommand(env, 'owner', 'sales.delete', { id: sale.id, revision: 2 }, 'guard:stale'), error => error.code === 'CONFLICT')
+    await executeCommand(env, 'owner', 'sales.return', { id: sale.id, revision: 1, reason: '实际退货' }, 'guard:return')
+    await assert.rejects(executeCommand(env, 'owner', 'sales.delete', { id: sale.id, revision: 2 }, 'guard:returned'), error => error.code === 'INVALID_STATE')
+    assert.equal((await executeRead(env, 'owner', 'sales.list', {}, '', '')).items.length, 1)
+    assert.equal((await env.DB.prepare('SELECT status FROM parrots WHERE id=?').bind(created.id).first()).status, 'RETURNED')
+  } finally { env.DB.close() }
+})
+
+test('deleting an accidental sale restores a bird from the active recycle window', async () => {
+  const env = setup()
+  try {
+    const created = await executeCommand(env, 'owner', 'parrots.create', bird('FEMALE', 'UNDO-RECYCLE'), 'undo-recycle:create')
+    const sale = await executeCommand(env, 'owner', 'sales.create', { parrotId: created.id, parrotRevision: 1, buyer: '买家', saleDate: '2026-09-05', priceCents: 100 }, 'undo-recycle:sale')
+    await executeCommand(env, 'owner', 'parrots.delete', { id: created.id, revision: 2 }, 'undo-recycle:delete-bird', 'admin-open-id')
+    const result = await executeCommand(env, 'owner', 'sales.delete', { id: sale.id, revision: 1 }, 'undo-recycle:delete-sale', 'admin-open-id')
+    assert.equal(result.restoredFromRecycleBin, true)
+    const birdRecord = await env.DB.prepare('SELECT status,deleted_at,deleted_by FROM parrots WHERE id=?').bind(created.id).first()
+    assert.equal(birdRecord.status, 'FOR_SALE')
+    assert.equal(birdRecord.deleted_at, null)
+    assert.equal(birdRecord.deleted_by, null)
+    assert.equal((await executeRead(env, 'owner', 'sales.list', {}, '', '')).items.length, 0)
+    const audit = await env.DB.prepare("SELECT actor_open_id FROM audit_logs WHERE action='parrots.restoreFromSaleDelete' AND target_id=?").bind(created.id).first()
+    assert.equal(audit.actor_open_id, 'admin-open-id')
+  } finally { env.DB.close() }
+})
